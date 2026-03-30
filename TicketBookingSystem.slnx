@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/WebApplication1/">
+    <Project Path="WebApplication1/API.csproj" />
+  </Folder>
+  <Project Path="Application/Application.csproj" />
+  <Project Path="Domain/Domain.csproj" />
+  <Project Path="Infrastructure/Infrastructure.csproj" />
+</Solution>

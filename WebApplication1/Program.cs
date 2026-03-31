@@ -1,17 +1,24 @@
+using Application.Commands.BookSeat;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Database connection
+//builder.Services.AddDbContext<AppDbContext>(options =>
+//    options.UseSqlServer(
+//        builder.Configuration.GetConnectionString("DefaultConnection")));
+
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection")));
+        "Data Source=(localdb)\\MSSQLLocalDB;Initial Catalog=TicketBookingDB;Integrated Security=True;TrustServerCertificate=True;"));
 
-// MediatR
+// MediatR — scan ALL assemblies explicitly
 builder.Services.AddMediatR(cfg =>
-    cfg.RegisterServicesFromAssembly(
-        typeof(Application.AssemblyReference).Assembly));
+{
+    cfg.RegisterServicesFromAssemblyContaining<BookSeatHandler>();
+});
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -21,7 +28,6 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
-app.UseHttpsRedirection();
 app.MapControllers();
 
 app.Run();

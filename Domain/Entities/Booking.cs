@@ -16,7 +16,7 @@ namespace Domain.Entities
 
         public String UserId { get; set; } = string.Empty;
 
-        public DateTime BookingAt { get; set; } = DateTime.Now;
+        public DateTime BookedAt { get; set; } = DateTime.Now;
 
         public BookingStatus Status { get; set; } = BookingStatus.Pending;
     }

@@ -1,6 +1,7 @@
 using Application.Commands.BookSeat;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,10 +10,15 @@ var builder = WebApplication.CreateBuilder(args);
 //    options.UseSqlServer(
 //        builder.Configuration.GetConnectionString("DefaultConnection")));
 
-
+//Database Connection
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         "Data Source=(localdb)\\MSSQLLocalDB;Initial Catalog=TicketBookingDB;Integrated Security=True;TrustServerCertificate=True;"));
+
+//Redis Cache
+builder.Services.AddSingleton<IConnectionMultiplexer>(
+    ConnectionMultiplexer.Connect(
+        builder.Configuration["Redis:Connection"]!));
 
 // MediatR — scan ALL assemblies explicitly
 builder.Services.AddMediatR(cfg =>

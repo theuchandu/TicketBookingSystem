@@ -1,4 +1,6 @@
 ﻿using Domain.Entities;
+using Domain.Messages;
+using Infrastructure.Messaging;
 using Infrastructure.Persistence;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -22,11 +24,16 @@ public class BookSeatHandler : IRequestHandler<BookSeatCommand, BookSeatResult>
 {
     private readonly AppDbContext _context;
     private readonly IConnectionMultiplexer _redis;
+    private readonly IMessagePublisher _publisher;
 
-    public BookSeatHandler(AppDbContext context, IConnectionMultiplexer redis)
+    public BookSeatHandler(
+        AppDbContext context,
+        IConnectionMultiplexer redis,
+        IMessagePublisher publisher)
     {
         _context = context;
         _redis = redis;
+        _publisher = publisher;
     }
 
     public async Task<BookSeatResult> Handle(
@@ -35,30 +42,25 @@ public class BookSeatHandler : IRequestHandler<BookSeatCommand, BookSeatResult>
     {
         var db = _redis.GetDatabase();
 
-        // Step 1 — Try to acquire Redis lock
-        // Only one user can hold this lock at a time!
+        // Layer 1 — Redis lock
         var lockKey = $"seat-lock:{request.SeatId}";
         var lockValue = Guid.NewGuid().ToString();
-        var lockExpiry = TimeSpan.FromSeconds(10);
 
         bool lockAcquired = await db.StringSetAsync(
-            lockKey,
-            lockValue,
-            lockExpiry,
-            When.NotExists); // Only set if key doesn't exist
+            lockKey, lockValue,
+            TimeSpan.FromSeconds(10),
+            When.NotExists);
 
         if (!lockAcquired)
-        {
             return new BookSeatResult
             {
                 Success = false,
-                Message = "Seat is being booked by someone else. Please try again!"
+                Message = "Seat is being booked. Please try again!"
             };
-        }
 
         try
         {
-            // Step 2 — Find the seat
+            // Layer 2 — Check availability
             var seat = await _context.Seats
                 .FirstOrDefaultAsync(s => s.Id == request.SeatId,
                     cancellationToken);
@@ -70,7 +72,6 @@ public class BookSeatHandler : IRequestHandler<BookSeatCommand, BookSeatResult>
                     Message = "Seat not found"
                 };
 
-            // Step 3 — Check availability
             if (seat.Status != SeatStatus.Available)
                 return new BookSeatResult
                 {
@@ -78,41 +79,25 @@ public class BookSeatHandler : IRequestHandler<BookSeatCommand, BookSeatResult>
                     Message = "Seat is already booked!"
                 };
 
-            // Step 4 — Book the seat
-            seat.Status = SeatStatus.Booked;
+            // Layer 3 — Publish to RabbitMQ queue
+            await _publisher.PublishBookingRequestAsync(
+                new BookingRequestedEvent
+                {
+                    SeatId = request.SeatId,
+                    UserId = request.UserId,
+                    RequestedAt = DateTime.UtcNow
+                });
 
-            var booking = new Booking
+            // Instantly return — worker processes in background
+            return new BookSeatResult
             {
-                SeatId = seat.Id,
-                UserId = request.UserId,
-                BookedAt = DateTime.UtcNow,
-                Status = BookingStatus.Confirmed
+                Success = true,
+                Message = $"Booking request received! Seat {seat.SeatNumber} is being confirmed."
             };
-
-            _context.Bookings.Add(booking);
-
-            try
-            {
-                // Step 5 — Save with RowVersion as backup
-                await _context.SaveChangesAsync(cancellationToken);
-                return new BookSeatResult
-                {
-                    Success = true,
-                    Message = "Seat " + seat.SeatNumber + " booked successfully!"
-                };
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                return new BookSeatResult
-                {
-                    Success = false,
-                    Message = "Seat was just taken. Please choose another!"
-                };
-            }
         }
         finally
         {
-            // Step 6 — Always release the lock!
+            // Always release Redis lock
             var currentValue = await db.StringGetAsync(lockKey);
             if (currentValue == lockValue)
                 await db.KeyDeleteAsync(lockKey);

@@ -1,26 +1,28 @@
 using Application.Commands.BookSeat;
+using Infrastructure.Messaging;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database connection
-//builder.Services.AddDbContext<AppDbContext>(options =>
-//    options.UseSqlServer(
-//        builder.Configuration.GetConnectionString("DefaultConnection")));
-
-//Database Connection
+// Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         "Data Source=(localdb)\\MSSQLLocalDB;Initial Catalog=TicketBookingDB;Integrated Security=True;TrustServerCertificate=True;"));
 
-//Redis Cache
+// Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(
-    ConnectionMultiplexer.Connect(
-        builder.Configuration["Redis:Connection"]!));
+    ConnectionMultiplexer.Connect("localhost:6379"));
 
-// MediatR — scan ALL assemblies explicitly
+// RabbitMQ Publisher
+builder.Services.AddSingleton<IMessagePublisher>(
+    new RabbitMQPublisher("amqp://guest:guest@localhost:5672"));
+
+// Background Worker — listens to queue
+builder.Services.AddHostedService<BookingWorker>();
+
+// MediatR
 builder.Services.AddMediatR(cfg =>
 {
     cfg.RegisterServicesFromAssemblyContaining<BookSeatHandler>();

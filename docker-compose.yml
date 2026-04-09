@@ -1,15 +1,41 @@
-version: '3.8'
-
 services:
-  sqlserver:
+  # 1. The Database
+  sql-db:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql-db-container
     environment:
-      SA_PASSWORD: "YourPassword123!"
-      ACCEPT_EULA: "Y"
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=P@ssw0rd2026! # <--- THIS MUST BE HERE
     ports:
       - "1433:1433"
 
-  redis:
-    image: redis:alpine
+  # 2. Redis Cache
+  cache-redis:
+    image: redis:latest
     ports:
       - "6379:6379"
+
+  # 3. RabbitMQ Message Queue
+  message-queue:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # 4. Your .NET API
+  booking-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:8080"
+    depends_on:
+      - sql-db
+      - cache-redis
+      - message-queue
+    environment:
+      # Password here MUST match the one in sql-db above
+      - ConnectionStrings__DefaultConnection=Server=sql-db;Database=TicketBookingDb;User Id=sa;Password=P@ssw0rd2026!;TrustServerCertificate=True
+      - Redis__ConnectionString=cache-redis:6379
+      - RabbitMQ__HostName=message-queue
+      - ASPNETCORE_ENVIRONMENT=Development

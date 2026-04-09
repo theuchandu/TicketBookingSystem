@@ -20,9 +20,9 @@ public class SeatDto
 public class GetAvailableSeatsHandler
     : IRequestHandler<GetAvailableSeatsQuery, List<SeatDto>>
 {
-    private readonly AppDbContext _context;
+    private readonly ApplicationDbContext _context;
 
-    public GetAvailableSeatsHandler(AppDbContext context)
+    public GetAvailableSeatsHandler(ApplicationDbContext context)
     {
         _context = context;
     }

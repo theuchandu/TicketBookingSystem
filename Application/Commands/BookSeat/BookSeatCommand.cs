@@ -22,12 +22,12 @@ public class BookSeatResult
 
 public class BookSeatHandler : IRequestHandler<BookSeatCommand, BookSeatResult>
 {
-    private readonly AppDbContext _context;
+    private readonly ApplicationDbContext _context;
     private readonly IConnectionMultiplexer _redis;
     private readonly IMessagePublisher _publisher;
 
     public BookSeatHandler(
-        AppDbContext context,
+        ApplicationDbContext context,
         IConnectionMultiplexer redis,
         IMessagePublisher publisher)
     {

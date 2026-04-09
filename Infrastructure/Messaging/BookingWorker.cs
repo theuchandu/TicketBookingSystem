@@ -4,6 +4,7 @@ using Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration; // Added for IConfiguration
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System.Text;
@@ -15,40 +16,47 @@ public class BookingWorker : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<BookingWorker> _logger;
+    private readonly IConfiguration _configuration; // Added Configuration injection
     private IConnection? _connection;
     private IModel? _channel;
     private const string QueueName = "booking-requests";
 
     public BookingWorker(
         IServiceProvider services,
-        ILogger<BookingWorker> logger)
+        ILogger<BookingWorker> logger,
+        IConfiguration configuration)
     {
         _services = services;
         _logger = logger;
+        _configuration = configuration;
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var factory = new ConnectionFactory
+        var rabbitHost = _configuration["RabbitMQ__HostName"] ?? "message-queue";
+        var factory = new ConnectionFactory() { HostName = rabbitHost };
+
+        // 1. Connection Retry Loop
+        while (!stoppingToken.IsCancellationRequested)
         {
-            Uri = new Uri("amqp://guest:guest@localhost:5672")
-        };
+            try
+            {
+                _connection = factory.CreateConnection();
+                _channel = _connection.CreateModel();
+                _channel.QueueDeclare(queue: QueueName, durable: true, exclusive: false, autoDelete: false);
 
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+                _logger.LogInformation("[Success] BookingWorker connected to RabbitMQ at {Host}", rabbitHost);
+                break; // Exit loop on success
+            }
+            catch (Exception)
+            {
+                _logger.LogWarning("[Retry] BookingWorker waiting for RabbitMQ at {Host}...", rabbitHost);
+                await Task.Delay(5000, stoppingToken); // Wait 5 seconds and try again
+            }
+        }
 
-        _channel.QueueDeclare(
-            queue: QueueName,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null);
-
-        // Only process one message at a time
-        _channel.BasicQos(0, 1, false);
-
+        // 2. Consumer Logic
         var consumer = new EventingBasicConsumer(_channel);
-
         consumer.Received += async (model, ea) =>
         {
             var body = ea.Body.ToArray();
@@ -56,51 +64,53 @@ public class BookingWorker : BackgroundService
 
             try
             {
-                var bookingEvent = JsonSerializer
-                    .Deserialize<BookingRequestedEvent>(message);
-
+                var bookingEvent = JsonSerializer.Deserialize<BookingRequestedEvent>(message);
                 if (bookingEvent != null)
+                {
                     await ProcessBookingAsync(bookingEvent);
+                }
 
-                // Acknowledge — tell RabbitMQ we processed it
-                _channel.BasicAck(ea.DeliveryTag, false);
-                _logger.LogInformation(
-                    "Processed booking for seat {SeatId}",
-                    bookingEvent?.SeatId);
+                // Acknowledge the message (remove from queue)
+                //_channel.BasicAck(ea.DeliveryTag, false);
+                // Add the ! after _channel
+                _channel!.BasicAck(ea.DeliveryTag, false);
             }
             catch (Exception ex)
             {
-                // Reject — put back in queue to retry
-                _channel.BasicNack(ea.DeliveryTag, false, true);
-                _logger.LogError(ex, "Failed to process booking");
+                _logger.LogError(ex, "Error processing booking message");
+                // Reject and requeue message on failure
+                //_channel.BasicNack(ea.DeliveryTag, false, true);
+                // Add the ! after _channel
+                _channel!.BasicNack(ea.DeliveryTag, false, true);
             }
         };
 
-        _channel.BasicConsume(
-            queue: QueueName,
-            autoAck: false,
-            consumer: consumer);
+        _channel.BasicConsume(queue: QueueName, autoAck: false, consumer: consumer);
 
-        return Task.CompletedTask;
+        // Keep the task alive until the application stops
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(1000, stoppingToken);
+        }
     }
 
     private async Task ProcessBookingAsync(BookingRequestedEvent bookingEvent)
     {
         using var scope = _services.CreateScope();
-        var context = scope.ServiceProvider
-            .GetRequiredService<AppDbContext>();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var seat = await context.Seats.FindAsync(bookingEvent.SeatId);
 
         if (seat == null || seat.Status != SeatStatus.Available)
         {
-            _logger.LogWarning(
-                "Seat {SeatId} not available", bookingEvent.SeatId);
+            _logger.LogWarning("Seat {SeatId} not available for User {UserId}", bookingEvent.SeatId, bookingEvent.UserId);
             return;
         }
 
+        // Update Seat Status
         seat.Status = SeatStatus.Booked;
 
+        // Create Booking Record
         context.Bookings.Add(new Booking
         {
             SeatId = seat.Id,
@@ -110,9 +120,7 @@ public class BookingWorker : BackgroundService
         });
 
         await context.SaveChangesAsync();
-        _logger.LogInformation(
-            "Booking confirmed for seat {SeatId} by {UserId}",
-            bookingEvent.SeatId, bookingEvent.UserId);
+        _logger.LogInformation("[Confirmed] Seat {SeatId} booked by {UserId}", bookingEvent.SeatId, bookingEvent.UserId);
     }
 
     public override void Dispose()

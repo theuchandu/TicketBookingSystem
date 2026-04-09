@@ -1,43 +1,31 @@
 ﻿using Domain.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
-namespace Infrastructure.Persistence;
+namespace Infrastructure.Persistence; // <--- Make sure '.Persistence' is here
 
-public class AppDbContext : DbContext
+// We change 'DbContext' to 'IdentityDbContext'
+// This tells EF Core to include tables for Users, Roles, and Claims.
+public class ApplicationDbContext : IdentityDbContext<IdentityUser>
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options)
-        : base(options) { }
-
-    public DbSet<Event> Events => Set<Event>();
-    public DbSet<Seat> Seats => Set<Seat>();
-    public DbSet<Booking> Bookings => Set<Booking>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
     {
-        // Concurrency control — prevents double booking!
-        modelBuilder.Entity<Seat>()
-            .Property(s => s.RowVersion)
-            .IsRowVersion();
+    }
 
-        // Seed test data
-        modelBuilder.Entity<Event>().HasData(new Event
-        {
-            Id = 1,
-            Name = "IPL Finals 2025",
-            Venue = "Hyderabad Stadium",
-            EventDate = DateTime.UtcNow.AddDays(30)
-        });
+    // Your existing DbSets (Seats, Bookings, etc.) stay here
+    
+    public DbSet<Seat> Seats { get; set; }
+    public DbSet<Event> Events { get; set; }
+    public DbSet<Booking> Bookings { get; set; } //
 
-        // Seed 10 seats for the event
-        for (int i = 1; i <= 10; i++)
-        {
-            modelBuilder.Entity<Seat>().HasData(new Seat
-            {
-                Id = i,
-                EventId = 1,
-                SeatNumber = $"A{i}",
-                Status = SeatStatus.Available
-            });
-        }
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
+        // THIS LINE IS CRITICAL:
+        base.OnModelCreating(builder);
+
+        // Your existing RowVersion configuration
+        builder.Entity<Seat>().Property(s => s.RowVersion).IsRowVersion();
     }
 }

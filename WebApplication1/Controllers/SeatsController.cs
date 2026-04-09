@@ -2,11 +2,13 @@
 using Application.Queries.GetSeats;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization; 
 
 namespace API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class SeatsController : ControllerBase
 {
     private readonly IMediator _mediator;
